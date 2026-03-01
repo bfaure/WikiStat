@@ -81,7 +81,7 @@ function SpikeItem({ spike, articleTitle }: { spike: Spike; articleTitle: string
       {showSearch && (
         <div className="spike-explain">
           <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>
-            Views were {spike.multiplier.toFixed(1)}x higher than the {formatNumber(Math.round(spike.average))} daily average.
+            Views were {spike.multiplier.toFixed(1)}x higher than the {formatNumber(Math.round(spike.average))} daily median.
             This often correlates with news events, viral content, or deaths/anniversaries.
           </p>
           <a
@@ -99,29 +99,34 @@ function SpikeItem({ spike, articleTitle }: { spike: Spike; articleTitle: string
 }
 
 /**
- * Detect significant view spikes using a rolling average comparison.
- * A spike is a day with views > 2x the 14-day rolling average.
+ * Detect significant view spikes using a rolling median comparison.
+ * A spike is a day with views > 1.75x the 14-day rolling median.
+ * Median is used instead of mean so that lead-up days before a spike
+ * don't inflate the baseline and mask the spike.
  */
 export function detectSpikes(pageviews: PageviewDay[]): Spike[] {
-  if (pageviews.length < 21) return []; // Need enough data for rolling avg
+  if (pageviews.length < 21) return []; // Need enough data for rolling window
 
   const spikes: Spike[] = [];
   const WINDOW = 14;
-  const THRESHOLD = 2; // 2x the average = spike
+  const THRESHOLD = 1.75;
 
   for (let i = WINDOW; i < pageviews.length; i++) {
     const day = pageviews[i];
-    // Rolling average of the WINDOW days before this day
-    const windowSlice = pageviews.slice(i - WINDOW, i);
-    const avg = windowSlice.reduce((s, d) => s + d.views, 0) / WINDOW;
+    // Rolling median of the WINDOW days before this day
+    const windowViews = pageviews.slice(i - WINDOW, i).map((d) => d.views).sort((a, b) => a - b);
+    const mid = Math.floor(windowViews.length / 2);
+    const median = windowViews.length % 2 === 0
+      ? (windowViews[mid - 1] + windowViews[mid]) / 2
+      : windowViews[mid];
 
-    if (avg > 0 && day.views > avg * THRESHOLD) {
+    if (median > 0 && day.views > median * THRESHOLD) {
       const d = new Date(day.date);
       spikes.push({
         date: day.date,
         views: day.views,
-        average: avg,
-        multiplier: day.views / avg,
+        average: median,
+        multiplier: day.views / median,
         period: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       });
     }
