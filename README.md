@@ -15,6 +15,12 @@
   <img src="https://img.shields.io/github/license/bfaure/WikiStat" alt="License" />
 </p>
 
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/wikistat/ofmhbinbkgbiebdniclmnhamgcjichgf?hl=en">
+    <img src="https://img.shields.io/badge/Chrome_Web_Store-Install-4285F4?logo=googlechrome&logoColor=white" alt="Install on Chrome Web Store" />
+  </a>
+</p>
+
 ---
 
 <p align="center">

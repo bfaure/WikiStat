@@ -21,10 +21,12 @@ export default defineContentScript({
 
   main(ctx: ContentScriptContext) {
     let currentArticle: ArticleInfo | null = null;
+    // Set by injectPanel so handleArticle can postMessage the iframe directly
+    let notifyPanel: ((article: ArticleInfo) => void) | null = null;
 
     // ── Article detection ───────────────────────────────────────────────
     /**
-     * Detect article and update session storage + notify background.
+     * Detect article and update session storage + notify panel iframe.
      * @param force — skip duplicate check (needed for back/forward/bfcache)
      */
     function handleArticle(force = false) {
@@ -45,11 +47,15 @@ export default defineContentScript({
 
       currentArticle = article;
 
+      // Write to session storage for initial panel load
       chrome.storage.session.set({ currentArticle: article }).catch(() => {});
       chrome.runtime.sendMessage({
         type: "ARTICLE_DETECTED",
         article,
       } satisfies ExtensionMessage).catch(() => {});
+
+      // Notify this tab's panel directly — avoids cross-tab session storage bleed
+      notifyPanel?.(article);
     }
 
     handleArticle();
@@ -70,10 +76,6 @@ export default defineContentScript({
       }
     }) as EventListener);
 
-    ctx.addEventListener(document, "visibilitychange", () => {
-      if (document.visibilityState === "visible") handleArticle(true);
-    });
-
     // URL polling fallback for navigations that events miss
     let lastUrl = window.location.href;
     const urlPoller = setInterval(() => {
@@ -87,7 +89,7 @@ export default defineContentScript({
 
     // ── Injected panel ──────────────────────────────────────────────────
     if (detectArticle()) {
-      injectPanel(ctx);
+      injectPanel(ctx, (notify) => { notifyPanel = notify; });
     }
 
     // ── Keyboard shortcut ────────────────────────────────────────────────
@@ -104,7 +106,7 @@ export default defineContentScript({
 
 // ── Panel injection ───────────────────────────────────────────────────────
 
-function injectPanel(ctx: ContentScriptContext) {
+function injectPanel(ctx: ContentScriptContext, onReady: (notify: (article: ArticleInfo) => void) => void) {
   const DEFAULT_WIDTH = 360;
   const MIN_WIDTH = 280;
   const MAX_WIDTH = 600;
@@ -175,6 +177,11 @@ function injectPanel(ctx: ContentScriptContext) {
     flex: "1",
   });
   container.appendChild(iframe);
+
+  // Register direct postMessage notifier for this tab's panel
+  onReady((article) => {
+    iframe.contentWindow?.postMessage({ type: "WIKISTAT_ARTICLE_CHANGE", article }, "*");
+  });
 
   // Toggle button — small tab on the right edge
   const toggle = document.createElement("button");

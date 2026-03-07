@@ -7,7 +7,7 @@ export default defineConfig({
     name: "WikiStat",
     description:
       "Wikipedia article statistics, quality insights, and navigation recommendations",
-    version: "0.1.0",
+    version: "0.2.0",
     permissions: ["storage", "activeTab", "tabs"],
     host_permissions: ["*://*.wikipedia.org/*", "*://*.wikimedia.org/*"],
     icons: {

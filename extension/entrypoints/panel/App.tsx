@@ -57,33 +57,23 @@ export default function App() {
     setPrefs(updated);
   }, [prefs.chartHeights]);
 
-  // Read current article from session storage + watch for changes
+  // Read current article from session storage on mount, then receive
+  // updates via postMessage from this tab's content script only —
+  // avoids cross-tab bleed through shared session storage.
   useEffect(() => {
-    // Load initial value
     chrome.storage.session.get("currentArticle", (result) => {
       if (result.currentArticle) {
         setArticle(result.currentArticle);
       }
     });
 
-    // Watch for changes
-    const listener = (
-      changes: { [key: string]: chrome.storage.StorageChange },
-      area: string
-    ) => {
-      if (area !== "session") return;
-      if (changes.currentArticle) {
-        const newArticle = changes.currentArticle.newValue ?? null;
-        setArticle(newArticle);
-        if (!newArticle) {
-          setStats(null);
-          setLoadingState("idle");
-        }
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === "WIKISTAT_ARTICLE_CHANGE") {
+        setArticle(e.data.article);
       }
     };
-
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
   }, []);
 
   const loadStats = useCallback(async (info: ArticleInfo) => {
