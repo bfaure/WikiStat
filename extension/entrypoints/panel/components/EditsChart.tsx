@@ -6,7 +6,6 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  Cell,
 } from "recharts";
 import type { EditDay } from "../../../lib/types";
 import { fetchRevisions, fetchRevisionDiff, type RevisionEntry } from "../../../lib/wikipedia-api";
@@ -23,12 +22,27 @@ interface Props {
 
 const MIN_HEIGHT = 80;
 const MAX_HEIGHT = 400;
+const MAX_EDITORS = 8;
+
+const EDITOR_COLORS = [
+  "var(--accent-green)",
+  "var(--accent-blue)",
+  "var(--accent-orange)",
+  "#e06c9f",
+  "#9b59b6",
+  "#1abc9c",
+  "#e67e22",
+  "#95a5a6",
+  "#7f8c8d", // "Others" slot
+];
 
 interface ChartBar {
   label: string;
   edits: number;
   startDate: string;
   endDate: string;
+  editors?: Record<string, number>;
+  [key: string]: string | number | boolean | Record<string, number> | undefined;
 }
 
 export default function EditsChart({ editHistory, loading, rangeDays, lang, slug, height = 140, onHeightChange }: Props) {
@@ -106,6 +120,7 @@ export default function EditsChart({ editHistory, loading, rangeDays, lang, slug
       edits: d.edits,
       startDate: d.date,
       endDate: d.date,
+      editors: d.editors,
     }));
   } else if (rangeDays <= 365) {
     chartData = aggregateWeeks(filtered);
@@ -116,6 +131,12 @@ export default function EditsChart({ editHistory, loading, rangeDays, lang, slug
   if (chartData.length === 0) return null;
 
   const selectedData = selectedBar !== null ? chartData[selectedBar] : null;
+
+  // Determine whether we have per-editor data
+  const hasEditorData = chartData.some((d) => d.editors && Object.keys(d.editors).length > 0);
+
+  // Build ranked editor list + flatten into chart-friendly keys
+  const { editorKeys, editorColorMap, stackedData } = buildEditorStacks(chartData, hasEditorData);
 
   return (
     <div className="section">
@@ -128,7 +149,7 @@ export default function EditsChart({ editHistory, loading, rangeDays, lang, slug
       <div className="chart-container" style={{ height: localHeight, cursor: "pointer" }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart
-            data={chartData}
+            data={stackedData}
             margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
             onClick={(state) => {
               if (state?.activeTooltipIndex != null) {
@@ -157,17 +178,47 @@ export default function EditsChart({ editHistory, loading, rangeDays, lang, slug
                 borderRadius: 2,
                 fontSize: 12,
               }}
-              formatter={(value: number) => [value.toLocaleString(), "Edits"]}
-              labelFormatter={(label: string) => label}
+              content={hasEditorData
+                ? ({ active, payload, label }) => {
+                    if (!active || !payload?.length) return null;
+                    const total = payload.reduce((s, p) => s + ((p.value as number) || 0), 0);
+                    return (
+                      <div style={{ background: "var(--bg-primary)", border: "1px solid var(--border-color)", borderRadius: 2, fontSize: 12, padding: "6px 8px" }}>
+                        <div style={{ marginBottom: 4, fontWeight: 500 }}>{label}</div>
+                        {payload.filter((p) => (p.value as number) > 0).map((p) => (
+                          <div key={p.dataKey as string} style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color, flexShrink: 0 }} />
+                              {p.dataKey as string}
+                            </span>
+                            <span>{(p.value as number).toLocaleString()}</span>
+                          </div>
+                        ))}
+                        <div style={{ borderTop: "1px solid var(--border-color)", marginTop: 4, paddingTop: 4, fontWeight: 500 }}>
+                          Total: {total.toLocaleString()}
+                        </div>
+                      </div>
+                    );
+                  }
+                : undefined
+              }
+              formatter={!hasEditorData ? ((value: number) => [value.toLocaleString(), "Edits"]) : undefined}
+              labelFormatter={!hasEditorData ? ((label: string) => label) : undefined}
             />
-            <Bar dataKey="edits" radius={[2, 2, 0, 0]} maxBarSize={20}>
-              {chartData.map((_, i) => (
-                <Cell
-                  key={i}
-                  fill={i === selectedBar ? "var(--accent-blue)" : "var(--accent-green)"}
+            {hasEditorData ? (
+              editorKeys.map((editor, i) => (
+                <Bar
+                  key={editor}
+                  dataKey={editor}
+                  stackId="editors"
+                  fill={editorColorMap[editor]}
+                  maxBarSize={20}
+                  radius={i === editorKeys.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
                 />
-              ))}
-            </Bar>
+              ))
+            ) : (
+              <Bar dataKey="edits" fill="var(--accent-green)" radius={[2, 2, 0, 0]} maxBarSize={20} />
+            )}
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -309,9 +360,67 @@ function RevisionRow({ rev, lang }: { rev: RevisionEntry; lang: string }) {
   );
 }
 
+function buildEditorStacks(chartData: ChartBar[], hasEditorData: boolean) {
+  if (!hasEditorData) return { editorKeys: [] as string[], editorColorMap: {} as Record<string, string>, stackedData: chartData };
+
+  // Sum total edits per editor across all bars
+  const totals = new Map<string, number>();
+  for (const bar of chartData) {
+    if (!bar.editors) continue;
+    for (const [editor, count] of Object.entries(bar.editors)) {
+      totals.set(editor, (totals.get(editor) || 0) + count);
+    }
+  }
+
+  // Rank by total edits, take top MAX_EDITORS
+  const ranked = Array.from(totals.entries())
+    .sort((a, b) => b[1] - a[1]);
+  const topEditors = ranked.slice(0, MAX_EDITORS).map(([name]) => name);
+  const topSet = new Set(topEditors);
+  const hasOthers = ranked.length > MAX_EDITORS;
+  const keys = hasOthers ? [...topEditors, "Others"] : topEditors;
+
+  // Assign colors
+  const colorMap: Record<string, string> = {};
+  keys.forEach((name, i) => { colorMap[name] = EDITOR_COLORS[i % EDITOR_COLORS.length]; });
+
+  // Flatten editor counts into top-level keys for Recharts
+  const flat = chartData.map((bar) => {
+    const row: ChartBar = { ...bar };
+    const editors = bar.editors || {};
+    let othersCount = 0;
+    for (const [editor, count] of Object.entries(editors)) {
+      if (topSet.has(editor)) {
+        row[editor] = count;
+      } else {
+        othersCount += count;
+      }
+    }
+    // Fill missing editors with 0 so stacking works
+    for (const name of topEditors) {
+      if (!(name in row)) row[name] = 0;
+    }
+    if (hasOthers) row["Others"] = othersCount;
+    return row;
+  });
+
+  return { editorKeys: keys, editorColorMap: colorMap, stackedData: flat };
+}
+
 function formatDay(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function mergeEditors(days: EditDay[]): Record<string, number> {
+  const merged: Record<string, number> = {};
+  for (const d of days) {
+    if (!d.editors) continue;
+    for (const [editor, count] of Object.entries(d.editors)) {
+      merged[editor] = (merged[editor] || 0) + count;
+    }
+  }
+  return merged;
 }
 
 function aggregateWeeks(days: EditDay[]): ChartBar[] {
@@ -321,18 +430,20 @@ function aggregateWeeks(days: EditDay[]): ChartBar[] {
     const totalEdits = week.reduce((s, d) => s + d.edits, 0);
     const midDate = week[Math.floor(week.length / 2)].date;
     const d = new Date(midDate);
+    const editors = mergeEditors(week);
     result.push({
       label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       edits: totalEdits,
       startDate: week[0].date,
       endDate: week[week.length - 1].date,
+      editors: Object.keys(editors).length > 0 ? editors : undefined,
     });
   }
   return result;
 }
 
 function aggregateMonths(days: EditDay[]): ChartBar[] {
-  const monthMap = new Map<string, { edits: number; startDate: string; endDate: string }>();
+  const monthMap = new Map<string, { edits: number; startDate: string; endDate: string; editors: Record<string, number> }>();
   for (const d of days) {
     const month = d.date.slice(0, 7);
     const existing = monthMap.get(month);
@@ -340,8 +451,13 @@ function aggregateMonths(days: EditDay[]): ChartBar[] {
       existing.edits += d.edits;
       if (d.date < existing.startDate) existing.startDate = d.date;
       if (d.date > existing.endDate) existing.endDate = d.date;
+      if (d.editors) {
+        for (const [editor, count] of Object.entries(d.editors)) {
+          existing.editors[editor] = (existing.editors[editor] || 0) + count;
+        }
+      }
     } else {
-      monthMap.set(month, { edits: d.edits, startDate: d.date, endDate: d.date });
+      monthMap.set(month, { edits: d.edits, startDate: d.date, endDate: d.date, editors: d.editors ? { ...d.editors } : {} });
     }
   }
   return Array.from(monthMap.entries())
@@ -353,6 +469,7 @@ function aggregateMonths(days: EditDay[]): ChartBar[] {
         edits: data.edits,
         startDate: data.startDate,
         endDate: data.endDate,
+        editors: Object.keys(data.editors).length > 0 ? data.editors : undefined,
       };
     });
 }

@@ -533,7 +533,7 @@ async function fetchEditHistory(lang: string, slug: string): Promise<EditDay[]> 
     action: "query",
     titles: title,
     prop: "revisions",
-    rvprop: "timestamp",
+    rvprop: "timestamp|user",
     rvlimit: "500",
     format: "json",
     origin: "*",
@@ -544,14 +544,19 @@ async function fetchEditHistory(lang: string, slug: string): Promise<EditDay[]> 
   const pages = data?.query?.pages;
   if (!pages) return [];
 
-  const page = Object.values(pages)[0] as { revisions?: Array<{ timestamp: string }> } | undefined;
+  const page = Object.values(pages)[0] as { revisions?: Array<{ timestamp: string; user?: string }> } | undefined;
   if (!page?.revisions) return [];
 
-  // Group revisions by day
+  // Group revisions by day, tracking per-editor counts
   const dayCounts = new Map<string, number>();
+  const dayEditors = new Map<string, Record<string, number>>();
   for (const rev of page.revisions) {
     const day = rev.timestamp.slice(0, 10); // YYYY-MM-DD
     dayCounts.set(day, (dayCounts.get(day) || 0) + 1);
+    const editor = rev.user || "Unknown";
+    const editors = dayEditors.get(day) || {};
+    editors[editor] = (editors[editor] || 0) + 1;
+    dayEditors.set(day, editors);
   }
 
   // Fill in missing days with 0 edits for a continuous series up to today
@@ -567,7 +572,7 @@ async function fetchEditHistory(lang: string, slug: string): Promise<EditDay[]> 
   const cursor = new Date(startDate);
   while (cursor <= endDate) {
     const key = cursor.toISOString().slice(0, 10);
-    result.push({ date: key, edits: dayCounts.get(key) || 0 });
+    result.push({ date: key, edits: dayCounts.get(key) || 0, editors: dayEditors.get(key) });
     cursor.setDate(cursor.getDate() + 1);
   }
 

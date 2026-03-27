@@ -4,13 +4,19 @@ interface Props {
   editors: TopEditor[] | null;
   loading: boolean;
   lang: string;
+  rangeDays?: number;
 }
 
-export default function TopEditors({ editors, loading, lang }: Props) {
+function rangeLabel(days: number): string {
+  if (days <= 365) return `${days}d`;
+  return `${Math.round(days / 365)}y`;
+}
+
+export default function TopEditors({ editors, loading, lang, rangeDays = 90 }: Props) {
   if (loading) {
     return (
       <div className="section">
-        <div className="section-title">Top Editors (recent)</div>
+        <div className="section-title">Top Editors ({rangeLabel(rangeDays)})</div>
         {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} style={{ padding: "0.4em 0.6em" }}>
             <div className="skeleton skeleton-text" style={{ width: "65%" }} />
@@ -24,7 +30,7 @@ export default function TopEditors({ editors, loading, lang }: Props) {
 
   return (
     <div className="section">
-      <div className="section-title">Top Editors (recent)</div>
+      <div className="section-title">Top Editors ({rangeLabel(rangeDays)})</div>
       <div className="top-editors-list">
         {editors.map((editor, i) => (
           <div key={editor.name} className="top-editor-item">

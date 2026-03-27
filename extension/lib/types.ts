@@ -53,6 +53,7 @@ export interface ProtectionInfo {
 export interface EditDay {
   date: string; // YYYY-MM-DD
   edits: number;
+  editors?: Record<string, number>; // editor name → edit count
 }
 
 /** A top editor for an article */

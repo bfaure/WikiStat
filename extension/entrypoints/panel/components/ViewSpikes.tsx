@@ -4,6 +4,7 @@ import { formatNumber } from "../../../lib/format";
 
 interface Props {
   pageviews: PageviewDay[];
+  leadPageviews?: PageviewDay[];
   articleTitle: string;
   rangeDays?: number;
 }
@@ -16,8 +17,10 @@ export interface Spike {
   period: string; // human-readable
 }
 
-export default function ViewSpikes({ pageviews, articleTitle, rangeDays = 90 }: Props) {
-  const spikes = detectSpikes(pageviews);
+export default function ViewSpikes({ pageviews, leadPageviews, articleTitle, rangeDays = 90 }: Props) {
+  const allData = leadPageviews ? [...leadPageviews, ...pageviews] : pageviews;
+  const rangeStartIndex = allData.length - pageviews.length;
+  const spikes = detectSpikes(allData, rangeStartIndex);
 
   // Show top 5 spikes
   const topSpikes = spikes.slice(0, 5);
@@ -103,13 +106,18 @@ function SpikeItem({ spike, articleTitle }: { spike: Spike; articleTitle: string
  * A spike is a day with views > 1.75x the 14-day rolling median.
  * Median is used instead of mean so that lead-up days before a spike
  * don't inflate the baseline and mask the spike.
+ *
+ * @param rangeStartIndex - Only report spikes at or after this index.
+ *   Pass WINDOW (14) extra leading days so spikes near the start of the
+ *   display range still have a full rolling window for their baseline.
  */
-export function detectSpikes(pageviews: PageviewDay[]): Spike[] {
+export function detectSpikes(pageviews: PageviewDay[], rangeStartIndex?: number): Spike[] {
   if (pageviews.length < 21) return []; // Need enough data for rolling window
 
   const spikes: Spike[] = [];
   const WINDOW = 14;
   const THRESHOLD = 1.75;
+  const reportFrom = rangeStartIndex ?? WINDOW;
 
   for (let i = WINDOW; i < pageviews.length; i++) {
     const day = pageviews[i];
@@ -120,7 +128,7 @@ export function detectSpikes(pageviews: PageviewDay[]): Spike[] {
       ? (windowViews[mid - 1] + windowViews[mid]) / 2
       : windowViews[mid];
 
-    if (median > 0 && day.views > median * THRESHOLD) {
+    if (median > 0 && day.views > median * THRESHOLD && i >= reportFrom) {
       const d = new Date(day.date);
       spikes.push({
         date: day.date,

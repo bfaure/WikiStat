@@ -100,17 +100,47 @@ export default function App() {
     }
   }, [article, loadStats]);
 
-  // Spike detection scoped to the selected chart range
+  // Spike detection scoped to the selected chart range.
+  // Include SPIKE_LEAD extra days before the range so spikes near the
+  // start still have a full rolling-median window for their baseline.
+  const SPIKE_LEAD = 14;
   const spikeDates = useMemo(() => {
     if (!stats || stats.pageviews.length === 0) return new Set<string>();
-    const rangeData = stats.pageviews.slice(-chartRange);
-    return new Set(detectSpikes(rangeData).map((s) => s.date));
+    const leadSlice = stats.pageviews.slice(-(chartRange + SPIKE_LEAD));
+    const rangeStartIndex = leadSlice.length - Math.min(chartRange, stats.pageviews.length);
+    return new Set(detectSpikes(leadSlice, rangeStartIndex).map((s) => s.date));
   }, [stats, chartRange]);
 
   // Pageviews sliced to current range (for ViewSpikes)
   const rangePageviews = useMemo(() => {
     if (!stats) return [];
     return stats.pageviews.slice(-chartRange);
+  }, [stats, chartRange]);
+
+  // Extra leading days so ViewSpikes can compute rolling median for early days
+  const leadPageviews = useMemo(() => {
+    if (!stats || stats.pageviews.length <= chartRange) return [];
+    return stats.pageviews.slice(-(chartRange + SPIKE_LEAD), -chartRange);
+  }, [stats, chartRange]);
+
+  // Top editors derived from editHistory, scoped to selected range
+  const rangeTopEditors = useMemo(() => {
+    if (!stats?.editHistory) return null;
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - chartRange);
+    const cutoff = cutoffDate.toISOString().slice(0, 10);
+    const totals = new Map<string, number>();
+    for (const day of stats.editHistory) {
+      if (day.date < cutoff || !day.editors) continue;
+      for (const [editor, count] of Object.entries(day.editors)) {
+        totals.set(editor, (totals.get(editor) || 0) + count);
+      }
+    }
+    if (totals.size === 0) return null;
+    return Array.from(totals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, editCount]) => ({ name, editCount }));
   }, [stats, chartRange]);
 
   if (!article) {
@@ -214,7 +244,7 @@ export default function App() {
       )}
 
       {prefs.sections.viewSpikes && rangePageviews.length > 0 && (
-        <ViewSpikes pageviews={rangePageviews} articleTitle={article.title} rangeDays={chartRange} />
+        <ViewSpikes pageviews={rangePageviews} leadPageviews={leadPageviews} articleTitle={article.title} rangeDays={chartRange} />
       )}
 
       {prefs.sections.editActivity && (
@@ -231,13 +261,14 @@ export default function App() {
 
       {prefs.sections.topEditors && (
         <TopEditors
-          editors={stats?.topEditors ?? null}
+          editors={rangeTopEditors}
           loading={loadingState === "loading"}
           lang={article.lang}
+          rangeDays={chartRange}
         />
       )}
 
-      {prefs.sections.editorsAlsoEdited && stats?.topEditors && stats.topEditors.length > 0 && (
+      {prefs.sections.editorsAlsoEdited && rangeTopEditors && rangeTopEditors.length > 0 && (
         <EditorsAlsoEdited
           lang={article.lang}
           slug={article.slug}
