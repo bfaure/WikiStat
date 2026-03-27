@@ -1,6 +1,6 @@
 {
   "name": "wikistat-extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "WikiStat - Wikipedia article statistics and navigation recommendations",
   "private": true,
   "type": "module",
